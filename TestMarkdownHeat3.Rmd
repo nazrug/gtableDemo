@@ -1,0 +1,404 @@
+---
+title: "Making many heatgraphs"
+author: "J.Norris NPS SCPN"
+date: "November 2, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+### Set the path pathMain below 
+### For detailed steps in Rstudio see table of contents.
+### START CLEAN, remove all objects and detach packages ####
+
+```{r startClean}
+
+rm(list=ls())
+
+## Detach non-base packages ####
+detachNonBasePackages <- function() {
+  ipack <- installed.packages()
+  packListDf <-  as.data.frame(ipack[ ipack[,"Priority"] %in% c("base","recommended"), c("Package", "Priority")], stringsAsFactors = FALSE)
+  baseOnly <- packListDf[which(packListDf$Priority == "base"),"Package"]
+  baseOnlyFullName <- paste0("package:",packListDf[which(packListDf$Priority == "base"),"Package"])
+  package.listAll <- search()[ifelse(unlist(gregexpr("package:",search()))==1,TRUE,FALSE)]
+  package.listMost <- setdiff(package.listAll,baseOnlyFullName)
+  if (length(package.listMost)>0)  for (package in package.listMost) detach(package, character.only=TRUE)
+}
+detachNonBasePackages()
+
+```
+
+### Load the libraries and set the paths and start and end years
+```{r c1}
+library(ggplot2)
+library(gtable)
+library(grid)
+library(dplyr)
+
+
+pathMain <- "Y:/Personal_Folders/Jodi/DataRequest_old/NazrugPresentation/ForGit/"
+pathOutHeatGraphs <- paste0(pathMain,"outgraphs/")
+
+load(paste0(pathMain,"ecoList2.Rda"))
+load(paste0(pathMain,"uplandLU.Rda"))
+load(paste0(pathMain,"ecositesNdviNoSnowScr.Rda"))
+load(paste0(pathMain,"NdviDateJulOctMaxA.Rda"))
+load(paste0(pathMain,"NdviDateMarJunMaxA.Rda"))
+load(paste0(pathMain,"NdviDateAnnMaxA.Rda"))
+load(paste0(pathMain,"NdviGpYearlyABCD.Rda"))
+load(paste0(pathMain,"SnowEs2001_2014.Rda"))
+
+yrStart <- 2001
+yrEnd <- 2014
+```
+#
+### BEGIN LOOP through ecosites for graphing ####
+```{r ecoloop}
+for (i in 1:nrow(ecoList2)) {
+#i <- 3
+ecoI <- ecoList2[i,"fireDraftEcoclassid"]
+ecoIParkEco <- paste0(ecoList2[i,"Park"],ecoList2[i,"EcositeL"])
+ecoLongNameR <- paste0(uplandLU[which(uplandLU$fireDraftEcoclassid == ecoI),"Park"],"  \n for the ", uplandLU[which(uplandLU$fireDraftEcoclassid == ecoI),"ecoclassname254"]," ecological site")    
+ecoLongName <- paste0(ecoLongNameR[1])
+# Get subsets and values based on this loop ####
+myFilename <- paste0(pathOutHeatGraphs,ecoIParkEco,".jpg")
+tempDf <- ecositesNdviNoSnowScr[which(ecositesNdviNoSnowScr$ecoclassid %in% ecoI),]
+lowLimit0 <- quantile(tempDf$NdviMed, 0.03) 
+lowLimit <- lowLimit0[[1]]
+tempDf$NdviMod <- ifelse(tempDf$NdviMed < lowLimit,lowLimit,tempDf$NdviMed ) 
+tempDfDateMonsPeak <- NdviDateJulOctMaxA[which(NdviDateJulOctMaxA$ecoclassid %in% ecoI),]
+tempDfDateSprPeak <- NdviDateMarJunMaxA[which(NdviDateMarJunMaxA$ecoclassid %in% ecoI),]
+tempDfDateAnnPeak <- NdviDateAnnMaxA[which(NdviDateAnnMaxA$ecoclassid %in% ecoI),]
+tempDfAnnStats <- NdviGpYearlyABCD[which(NdviGpYearlyABCD$ecoclassid %in% ecoI),]
+tempDFSnowDaily1C <- SnowEs2001_2014[which(SnowEs2001_2014$ecoclassid %in% ecoI & SnowEs2001_2014$SnowFlagSingCell == 1),]
+tempDFSnowDaily2Pct <- SnowEs2001_2014[which(SnowEs2001_2014$ecoclassid %in% ecoI & SnowEs2001_2014$SnowPct > 0.02),]
+
+avgAnnMin <- mean(tempDfAnnStats$NdviMinAnnP12) # what is the avg annual Ndvi minimum (screened to remove extremes)
+avgAnnMax <- mean(tempDfAnnStats$NdviMaxAnn) # what is the avg annual Ndvi minimum (screened to remove extremes)
+avgAnnAmp <- avgAnnMax- avgAnnMin # what is the average annual NDVI amplitude?
+uLimit <- quantile(tempDf$NdviMed, 1)
+yelBnd <- ((avgAnnMin + 0.1 * avgAnnAmp) - lowLimit) / (uLimit - lowLimit)  #color break for yellow
+grnBnd <- ((avgAnnMin + 0.8 * avgAnnAmp) - lowLimit) / (uLimit - lowLimit) # color break for green
+drkGrnBnd <- ((avgAnnMax + 0.2 * avgAnnAmp) - lowLimit) / (uLimit - lowLimit) # color break for dark green
+
+# values for for color breaks
+colBreaks <- c(0,yelBnd,grnBnd,drkGrnBnd,1)
+
+## convert things below the lower limit to the limit itself, we'll mark the legend with 
+## a less-than label
+tempDf$NdviMod <- ifelse(tempDf$NdviMed < lowLimit,lowLimit,tempDf$NdviMed ) 
+
+## MAKE HEATMAP with a legend ####
+pMainLeg <-   ggplot(data = tempDf, aes(doyN, yearV)) + 
+  geom_tile(aes(fill = NdviMod)) + 
+  geom_point(data = tempDfDateMonsPeak, aes(x = doyN, y = yearV),pch = 2, size = 3, stroke = 1.5) + 
+  geom_point(data = tempDfDateSprPeak, aes(x = doyN, y = yearV),pch = 6, size = 3, stroke = 1.5) +
+  geom_point(data = tempDfDateAnnPeak, aes(x = doyN, y = yearV), pch = 1, size = 6, stroke = 1.5) + 
+  scale_fill_gradientn(colours = c("purple",
+                                  "yellow",
+                                  "green",
+                                  "dark green"), 
+                       limits=c(lowLimit,uLimit),
+                       values = colBreaks
+                       ) + 
+  scale_y_continuous("Year", limits = c(2000.5,2014.5), breaks = seq(yrStart,yrEnd), expand=c(0,0)) +
+  scale_x_continuous("Month", 
+                     limits = c(0,366), 
+                     expand=c(0,0), 
+                     breaks = c(1,32,60,91,121,152,182,213,244,274,305,335), 
+                     labels = c("Jan-1","Feb-1","Mar-1","Apr-1","May-1","Jun-1","Jul-1","Aug-1","Sep-1","Oct-1","Nov-1","Dec-1")) +
+  theme(legend.position = "left",
+        legend.direction = "horizontal",
+        legend.text = element_text(size = 0, color = "white"),
+        axis.text.y = element_text( size=34),
+       axis.text.x=element_text( size=34, angle = 90),
+       axis.title.x = element_text(size=34),
+       axis.line = element_line(colour="black", size=1),
+       axis.title.y = element_blank(),
+       axis.ticks.x = element_line(),
+       axis.ticks.y =  element_blank(),
+       axis.ticks.length = unit(0.2, "cm"),
+        #                    panel.grid.major = element_blank(),
+        #                    panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+       panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  labs(fill="")
+
+
+# ADD SNOW DATA PLOT#### 
+pMainLeg <- pMainLeg + geom_tile(data=tempDFSnowDaily2Pct,aes(x=doyN,y=yearV),fill = "dark gray")
+pMain <- pMainLeg + guides(fill = FALSE)  
+
+## MAKE MARGINAL PLOT of annual stats####
+pMargLeg <- ggplot(data = tempDfAnnStats, aes(x=yearV,y=NdviMaxJulOct, color = "Annual Stats")) +
+  geom_line(color="blue",size=1.5) +  # monsoon line
+  geom_point(data = tempDfAnnStats, aes(x=yearV,y=NdviMaxAnn,color="Annual peak"),size = 8, pch = 1, stroke = 1.5) + # annual line
+  geom_point(aes(color = "Monsoon peak (JASO)"),fill = "blue", size = 4, pch = 24) + # monsoon symbol blue
+  geom_line(data = tempDfAnnStats, aes(x=yearV,y=NdviMaxMarJun),color="red",size = 1.5) + # spring line
+  geom_point(data = tempDfAnnStats, aes(x=yearV,y=NdviMaxMarJun,color="Spring Peak (MAMJ)"),fill = "red",size = 4, pch = 25) + # spring symbol
+  geom_line(data = tempDfAnnStats, aes(x=yearV,y=NdviMinAnnP12),color="black",size = 1.5) + # ann min line
+  geom_point(data = tempDfAnnStats, aes(x=yearV,y=NdviMinAnnP12,color="Annual base"),size = 4, pch = 19) + # ann min symbol                
+  coord_flip() +
+                    theme(axis.text.y = element_blank(),
+                    axis.text.x=element_text(angle = 90,vjust = 0.5,size=34),
+                    axis.title.x = element_text(size=34),
+                    axis.line = element_line(colour="black", size=1),
+                    axis.title.y = element_blank(),
+                    axis.ticks.y =  element_blank(),
+                    axis.ticks.length = unit(0.2, "cm"),
+#                    panel.grid.major = element_blank(),
+#                    panel.grid.minor = element_blank(),
+                    panel.background = element_blank(),
+                    legend.text=element_text(size=15),
+                    legend.title=element_text(size=15)) +
+                    scale_colour_manual(values = c("black","black","blue","red")) +
+                    guides(color=guide_legend(override.aes=list(shape=c(19,1,24,25),fill = c("black","white","blue","red"), size = 5))) +
+              scale_y_continuous(name ="Ndvi") + 
+              labs(color = "Annual Statistics")
+
+# same plot but without the legend so we can maniplate in the table
+pMarg <- pMargLeg + guides(fill = FALSE, color = FALSE)  
+
+## Combine the main heat plot and the marginal plot
+gtMain <- ggplot_gtable(ggplot_build(pMain)) # this is for the main heatplot
+gtMainLeg <- ggplot_gtable(ggplot_build(pMainLeg)) # this one is just to harvest the legend
+gtMarg <- ggplot_gtable(ggplot_build(pMarg))
+gtMargLeg <- ggplot_gtable(ggplot_build(pMargLeg)) # this one is just to harvest the legend
+gtTitle <- textGrob(paste0("Smoothed NDVI values by day of year for 2001-2014 for ", ecoLongName),gp=gpar(fontsize=20,font=3))  
+gtTitle2 <- textGrob("provisional data, values not finalized",gp=gpar(fontsize=18,font=3)) 
+gtTitle3 <- textGrob(paste0("Less     More", "\ngreen   green"),gp=gpar(fontsize=20,font=3))  
+
+#get those legends
+leg1 <- gtMainLeg$grobs[[which(gtMainLeg$layout$name == "guide-box")]]
+leg2 <- gtMargLeg$grobs[[which(gtMargLeg$layout$name == "guide-box")]]
+
+# Get maximum widths and heights
+maxWidth <- unit.pmax(gtMain$widths[2:3])
+maxHeight <- unit.pmax(gtMain$heights[4:5], gtMarg$heights[4:5])
+
+
+# Set the maximums in the gtables for gt1, gt2 and gt3 ####
+gtMain$widths[2:3] <- as.list(maxWidth)
+
+gtMain$heights[4:5] <- as.list(maxHeight)
+gtMarg$heights[4:5] <- as.list(maxHeight)
+# OPEN jpeg file ####
+jpeg (myFilename,units = "mm",res=300,width = 430,height = 300)
+gtFin <- gtable(widths = unit(c(7, 1.2,1.7), "null"), height = unit(c(0.75,0.30, 7), "null"))
+#gtable  
+# Instert gt1, gt2 and gt3 into the new gtable ####  position is row, column starting from the top left  
+gtFin <- gtable_add_grob(gtFin, gtMain, 3, 1) # main heatmap
+gtFin <- gtable_add_grob(gtFin, gtMarg, 3,2) # marginal plot
+gtFin <- gtable_add_grob(gtFin, leg1, 2,2) # main legend
+gtFin <- gtable_add_grob(gtFin, gtTitle, 1,1) # main title
+gtFin <- gtable_add_grob(gtFin, gtTitle2, 2,1) # provisional data
+gtFin <- gtable_add_grob(gtFin, leg2, 3,3) # marginal legend
+gtFin <- gtable_add_grob(gtFin, gtTitle3, 1,2) # more/less green 
+
+# And render the plot
+
+grid.newpage()
+grid.draw(gtFin)
+dev.off()
+
+}
+
+# END of LOOP ####
+```
+
+### now let's just do the loope where i = 5 to show what's going on
+
+##### setup data  for graphing ####
+```{r JustLoop5}
+i <- 5
+ecoI <- ecoList2[i,"fireDraftEcoclassid"]
+ecoIParkEco <- paste0(ecoList2[i,"Park"],ecoList2[i,"EcositeL"])
+ecoLongNameR <- paste0(uplandLU[which(uplandLU$fireDraftEcoclassid == ecoI),"Park"],"  \n for the ", uplandLU[which(uplandLU$fireDraftEcoclassid == ecoI),"ecoclassname254"]," ecological site")    
+ecoLongName <- paste0(ecoLongNameR[1])
+# Get subsets and values based on this loop ####
+myFilename <- paste0(pathOutHeatGraphs,ecoIParkEco,".jpg")
+tempDf <- ecositesNdviNoSnowScr[which(ecositesNdviNoSnowScr$ecoclassid %in% ecoI),]
+lowLimit0 <- quantile(tempDf$NdviMed, 0.03) 
+lowLimit <- lowLimit0[[1]]
+tempDf$NdviMod <- ifelse(tempDf$NdviMed < lowLimit,lowLimit,tempDf$NdviMed ) 
+tempDfDateMonsPeak <- NdviDateJulOctMaxA[which(NdviDateJulOctMaxA$ecoclassid %in% ecoI),]
+tempDfDateSprPeak <- NdviDateMarJunMaxA[which(NdviDateMarJunMaxA$ecoclassid %in% ecoI),]
+tempDfDateAnnPeak <- NdviDateAnnMaxA[which(NdviDateAnnMaxA$ecoclassid %in% ecoI),]
+tempDfAnnStats <- NdviGpYearlyABCD[which(NdviGpYearlyABCD$ecoclassid %in% ecoI),]
+tempDFSnowDaily1C <- SnowEs2001_2014[which(SnowEs2001_2014$ecoclassid %in% ecoI & SnowEs2001_2014$SnowFlagSingCell == 1),]
+tempDFSnowDaily2Pct <- SnowEs2001_2014[which(SnowEs2001_2014$ecoclassid %in% ecoI & SnowEs2001_2014$SnowPct > 0.02),]
+
+avgAnnMin <- mean(tempDfAnnStats$NdviMinAnnP12) # what is the avg annual Ndvi minimum (screened to remove extremes)
+avgAnnMax <- mean(tempDfAnnStats$NdviMaxAnn) # what is the avg annual Ndvi minimum (screened to remove extremes)
+avgAnnAmp <- avgAnnMax- avgAnnMin # what is the average annual NDVI amplitude?
+uLimit <- quantile(tempDf$NdviMed, 1)
+yelBnd <- ((avgAnnMin + 0.1 * avgAnnAmp) - lowLimit) / (uLimit - lowLimit)  #color break for yellow
+grnBnd <- ((avgAnnMin + 0.8 * avgAnnAmp) - lowLimit) / (uLimit - lowLimit) # color break for green
+drkGrnBnd <- ((avgAnnMax + 0.2 * avgAnnAmp) - lowLimit) / (uLimit - lowLimit) # color break for dark green
+
+# values for for color breaks
+colBreaks <- c(0,yelBnd,grnBnd,drkGrnBnd,1)
+
+## convert things below the lower limit to the limit itself, we'll mark the legend with 
+## a less-than label
+tempDf$NdviMod <- ifelse(tempDf$NdviMed < lowLimit,lowLimit,tempDf$NdviMed ) 
+```
+#### MAKE HEATMAP with a legend ####
+
+```{r EC1}
+pMainLeg <-   ggplot(data = tempDf, aes(doyN, yearV)) + 
+  geom_tile(aes(fill = NdviMod)) + 
+  geom_point(data = tempDfDateMonsPeak, aes(x = doyN, y = yearV),pch = 2, size = 3, stroke = 1.5) + 
+  geom_point(data = tempDfDateSprPeak, aes(x = doyN, y = yearV),pch = 6, size = 3, stroke = 1.5) +
+  geom_point(data = tempDfDateAnnPeak, aes(x = doyN, y = yearV), pch = 1, size = 6, stroke = 1.5) + 
+  scale_fill_gradientn(colours = c("purple",
+                                  "yellow",
+                                  "green",
+                                  "dark green"), 
+                       limits=c(lowLimit,uLimit),
+                       values = colBreaks
+                       ) + 
+  scale_y_continuous("Year", limits = c(2000.5,2014.5), breaks = seq(yrStart,yrEnd), expand=c(0,0)) +
+  scale_x_continuous("Month", 
+                     limits = c(0,366), 
+                     expand=c(0,0), 
+                     breaks = c(1,32,60,91,121,152,182,213,244,274,305,335), 
+                     labels = c("Jan-1","Feb-1","Mar-1","Apr-1","May-1","Jun-1","Jul-1","Aug-1","Sep-1","Oct-1","Nov-1","Dec-1")) +
+  theme(legend.position = "left",
+        legend.direction = "horizontal",
+        legend.text = element_text(size = 0, color = "white"),
+        axis.text.y = element_text( size=34),
+       axis.text.x=element_text( size=34, angle = 90),
+       axis.title.x = element_text(size=34),
+       axis.line = element_line(colour="black", size=1),
+       axis.title.y = element_blank(),
+       axis.ticks.x = element_line(),
+       axis.ticks.y =  element_blank(),
+       axis.ticks.length = unit(0.2, "cm"),
+        #                    panel.grid.major = element_blank(),
+        #                    panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+       panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  labs(fill="")
+
+# ADD SNOW DATA PLOT#### 
+pMainLeg <- pMainLeg + geom_tile(data=tempDFSnowDaily2Pct,aes(x=doyN,y=yearV),fill = "dark gray")
+```
+
+#### display the plot for showNtell
+```{r EC2}
+pMainLeg
+```
+
+#### same plot but without the legend ####
+#### so we can combine it with the marginal plot
+
+```{r EC3}
+pMain <- pMainLeg + guides(fill = FALSE)  
+# display the plot for showNtell
+pMain
+```
+
+#### MAKE MARGINAL PLOT of annual stats####
+```{r EC4}
+pMargLeg <- ggplot(data = tempDfAnnStats, aes(x=yearV,y=NdviMaxJulOct, color = "Annual Stats")) +
+  geom_line(color="blue",size=1.5) +  # monsoon line
+  geom_point(data = tempDfAnnStats, aes(x=yearV,y=NdviMaxAnn,color="Annual peak"),size = 8, pch = 1, stroke = 1.5) + # annual line
+  geom_point(aes(color = "Monsoon peak (JASO)"),fill = "blue", size = 4, pch = 24) + # monsoon symbol blue
+  geom_line(data = tempDfAnnStats, aes(x=yearV,y=NdviMaxMarJun),color="red",size = 1.5) + # spring line
+  geom_point(data = tempDfAnnStats, aes(x=yearV,y=NdviMaxMarJun,color="Spring Peak (MAMJ)"),fill = "red",size = 4, pch = 25) + # spring symbol
+  geom_line(data = tempDfAnnStats, aes(x=yearV,y=NdviMinAnnP12),color="black",size = 1.5) + # ann min line
+  geom_point(data = tempDfAnnStats, aes(x=yearV,y=NdviMinAnnP12,color="Annual base"),size = 4, pch = 19) + # ann min symbol                
+  coord_flip() +
+                    theme(axis.text.y = element_blank(),
+                    axis.text.x=element_text(angle = 90,vjust = 0.5,size=34),
+                    axis.title.x = element_text(size=34),
+                    axis.line = element_line(colour="black", size=1),
+                    axis.title.y = element_blank(),
+                    axis.ticks.y =  element_blank(),
+                    axis.ticks.length = unit(0.2, "cm"),
+#                    panel.grid.major = element_blank(),
+#                    panel.grid.minor = element_blank(),
+                    panel.background = element_blank(),
+                    legend.text=element_text(size=15),
+                    legend.title=element_text(size=15)) +
+                    scale_colour_manual(values = c("black","black","blue","red")) +
+                    guides(color=guide_legend(override.aes=list(shape=c(19,1,24,25),fill = c("black","white","blue","red"), size = 5))) +
+              scale_y_continuous(name ="Ndvi") + 
+              labs(color = "Annual Statistics")
+```
+
+#### display the plot for showNtell
+```{r EC5}
+pMargLeg
+```
+
+#### same plot but without the legend so we can maniplate in the table
+```{r EC6}
+pMarg <- pMargLeg + guides(fill = FALSE, color = FALSE)  
+# display the plot for showNtell
+pMarg
+```
+
+#### Start building and creating text objects
+```{r EC7}
+gtMain <- ggplot_gtable(ggplot_build(pMain)) # this is for the main heatplot
+gtMainLeg <- ggplot_gtable(ggplot_build(pMainLeg)) # this one is just to harvest the legend
+```
+
+#### now lets do it using the alternate ggplotGrob function
+  ##### I don't know what the difference is, but there may be different settings available
+```{r EC8}
+gtMarg <- ggplotGrob(pMarg)
+gtMargLeg <- ggplotGrob(pMargLeg) # this one is just to harvest the legend
+```
+#### Lets make some title text objects 
+```{r EC9}
+gtTitle <- textGrob(paste0("Smoothed NDVI values by day of year for 2001-2014 for ", ecoLongName),gp=gpar(fontsize=20,font=3))  
+gtTitle2 <- textGrob("provisional data, values not finalized",gp=gpar(fontsize=18,font=3)) 
+gtTitle3 <- textGrob(paste0("Less     More", "\ngreen   green"),gp=gpar(fontsize=20,font=3))  
+```
+
+####get those legends
+```{r EC10}
+leg1 <- gtMainLeg$grobs[[which(gtMainLeg$layout$name == "guide-box")]]
+leg2 <- gtMargLeg$grobs[[which(gtMargLeg$layout$name == "guide-box")]]
+```
+
+#### see what the oject looks like ####
+```{r EC11}
+gtMargLeg
+```
+
+#### OPEN jpeg file as display ####
+
+```{r EC12}
+jpeg (myFilename,units = "mm",res=300,width = 430,height = 300)
+```
+
+#### create our final gtable object, setting the relative row and column dimensions
+```{r EC13}
+gtFin <- gtable(widths = unit(c(7, 1.2,1.7), "null"), height = unit(c(0.75,0.30, 7), "null"))
+```
+#### Instert gt1, gt2 and gt3 into the new gtable ####
+####  position is row, column starting from the top left  
+```{r EC14}
+gtFin <- gtable_add_grob(gtFin, gtMain, 3, 1) # main heatmap
+gtFin <- gtable_add_grob(gtFin, gtMarg, 3,2) # marginal plot
+gtFin <- gtable_add_grob(gtFin, leg1, 2,2) # main legend
+gtFin <- gtable_add_grob(gtFin, gtTitle, 1,1) # main title
+gtFin <- gtable_add_grob(gtFin, gtTitle2, 2,1) # provisional data
+gtFin <- gtable_add_grob(gtFin, leg2, 3,3) # marginal legend
+gtFin <- gtable_add_grob(gtFin, gtTitle3, 1,2) # more/less green 
+```
+
+#### And render the plot, it looks better in the saved files so check the outgraphs directory
+```{r EC15}
+grid.newpage()
+grid.draw(gtFin)
+dev.off()
+grid.draw(gtFin)
+```
+
